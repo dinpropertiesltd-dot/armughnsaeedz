@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { User, PropertyFile, Message, Notice } from './types';
 import { MOCK_USERS, MOCK_FILES, MOCK_NOTICES, MOCK_MESSAGES } from './data';
 import { supabase, authProvider, normalizeCNIC } from './supabase';
 import { 
@@ -49,21 +48,21 @@ const Logo = () => (
   </svg>
 );
 
-const App: React.FC = () => {
+const App = () => {
   const [isLoading, setIsLoading] = useState(true);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState(null);
   const [isAuthorized, setIsAuthorized] = useState(false);
-  const [users, setUsers] = useState<User[]>(MOCK_USERS);
-  const [allFiles, setAllFiles] = useState<PropertyFile[]>(MOCK_FILES);
-  const [userFiles, setUserFiles] = useState<PropertyFile[]>([]);
-  const [currentPage, setCurrentPage] = useState<string>('dashboard');
+  const [users, setUsers] = useState(MOCK_USERS);
+  const [allFiles, setAllFiles] = useState(MOCK_FILES);
+  const [userFiles, setUserFiles] = useState([]);
+  const [currentPage, setCurrentPage] = useState(''); 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<PropertyFile | null>(null);
-  const [notices, setNotices] = useState<Notice[]>(MOCK_NOTICES);
-  const [messages, setMessages] = useState<Message[]>(MOCK_MESSAGES);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [notices, setNotices] = useState(MOCK_NOTICES);
+  const [messages, setMessages] = useState(MOCK_MESSAGES);
   const [isLocalDataPinned, setIsLocalDataPinned] = useState(false);
 
-  const syncPropertyRecords = useCallback(async (cnic: string, role: string) => {
+  const syncPropertyRecords = useCallback(async (cnic, role) => {
     if (isLocalDataPinned) return;
     try {
       if (role === 'ADMIN') {
@@ -78,35 +77,41 @@ const App: React.FC = () => {
         setUserFiles(data);
       }
     } catch (e) {
-      console.warn("Registry Sync Suspended. Falling back to local cache.");
+      console.warn("Registry Sync Suspended. Falling back to cache.");
     }
   }, [isLocalDataPinned]);
 
-  const fetchUserAndRedirect = async (supabaseUser: any) => {
+  const fetchUserAndRedirect = async (supabaseUser) => {
     setIsLoading(true);
-    // Source of Truth: The profiles table in our database
-    const { data: profile } = await authProvider.getProfile(supabaseUser.id);
-    const loggedInUser: User = {
-      id: supabaseUser.id,
-      name: profile?.name || supabaseUser.user_metadata?.name || 'Member',
-      email: supabaseUser.email || '',
-      cnic: profile?.cnic || supabaseUser.user_metadata?.cnic || 'PENDING',
-      phone: profile?.phone || supabaseUser.user_metadata?.phone || '',
-      role: (profile?.role || supabaseUser.user_metadata?.role || 'CLIENT') as any,
-      status: 'Active'
-    };
-    
-    setUser(loggedInUser);
-    
-    // REDIRECTION LOGIC: Final destination based on confirmed role
-    if (loggedInUser.role === 'ADMIN') {
-      setCurrentPage('admin');
-    } else {
-      setCurrentPage('dashboard');
-    }
+    try {
+      const { data: profile } = await authProvider.getProfile(supabaseUser.id);
+      const userRole = (profile?.role || supabaseUser.user_metadata?.role || 'CLIENT');
+      
+      const loggedInUser = {
+        id: supabaseUser.id,
+        name: profile?.name || supabaseUser.user_metadata?.name || 'Member',
+        email: supabaseUser.email || '',
+        cnic: profile?.cnic || supabaseUser.user_metadata?.cnic || 'PENDING',
+        phone: profile?.phone || supabaseUser.user_metadata?.phone || '',
+        role: userRole,
+        status: 'Active'
+      };
+      
+      setUser(loggedInUser);
+      
+      // Critical fix: set page BEFORE clearing loading state
+      if (loggedInUser.role === 'ADMIN') {
+        setCurrentPage('admin');
+      } else {
+        setCurrentPage('dashboard');
+      }
 
-    await syncPropertyRecords(loggedInUser.cnic, loggedInUser.role);
-    setIsLoading(false);
+      await syncPropertyRecords(loggedInUser.cnic, loggedInUser.role);
+    } catch (err) {
+      console.error("Critical Redirection Failure:", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -140,10 +145,9 @@ const App: React.FC = () => {
     initAuth();
   }, [syncPropertyRecords]);
 
-  const handleFinalAuthorization = async (finalUser: User) => {
+  const handleFinalAuthorization = async (finalUser) => {
     sessionStorage.setItem('din_authorized', 'true');
     setIsAuthorized(true);
-    // Even after manual login, we re-verify with the consolidated function to ensure consistency
     await fetchUserAndRedirect({ id: finalUser.id, email: finalUser.email, user_metadata: {} });
   };
 
@@ -151,7 +155,7 @@ const App: React.FC = () => {
     await authProvider.signOut();
   };
 
-  const handleImportDatabase = (data: { users: User[], files: PropertyFile[] }, isDestructive: boolean = false) => {
+  const handleImportDatabase = (data, isDestructive = false) => {
     setIsLocalDataPinned(true); 
     if (isDestructive) {
       setUsers(data.users);
@@ -180,6 +184,9 @@ const App: React.FC = () => {
     return <LoginPage onLogin={handleFinalAuthorization} users={users} onRegister={() => {}} />;
   }
 
+  // Double check the currentPage matches role to prevent any brief flash if currentPage was somehow set to dashboard
+  const activePage = currentPage || (user.role === 'ADMIN' ? 'admin' : 'dashboard');
+
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'property', label: 'Inventory', icon: Home, hidden: user.role !== 'ADMIN' },
@@ -199,7 +206,7 @@ const App: React.FC = () => {
           <nav className="flex-1 p-4 space-y-1.5 overflow-y-auto">
             {navItems.map((item) => (
               <button key={item.id} onClick={() => { setCurrentPage(item.id); setSelectedFile(null); setIsSidebarOpen(false); }} 
-                className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all ${currentPage === item.id ? 'bg-slate-900 text-white shadow-xl' : 'text-slate-500 hover:bg-slate-50'}`}>
+                className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all ${activePage === item.id ? 'bg-slate-900 text-white shadow-xl' : 'text-slate-500 hover:bg-slate-50'}`}>
                 <item.icon size={20} /> <span className="flex-1 text-left">{item.label}</span>
               </button>
             ))}
@@ -225,12 +232,12 @@ const App: React.FC = () => {
             <AccountStatement file={selectedFile} onBack={() => setSelectedFile(null)} />
           ) : (
             <>
-              {currentPage === 'dashboard' && <Dashboard onSelectFile={setSelectedFile} files={user.role === 'ADMIN' ? allFiles : userFiles} userName={user.name} />}
-              {currentPage === 'property' && <PropertyPortal allFiles={allFiles} setAllFiles={setAllFiles} onPreviewStatement={setSelectedFile} isLocalDataPinned={isLocalDataPinned} />}
-              {currentPage === 'notices' && <PublicNotices notices={notices} />}
-              {currentPage === 'inbox' && <Inbox messages={messages} setMessages={setMessages} currentUser={user} onSendMessage={(msg) => setMessages(prev => [...prev, msg])} users={users} />}
-              {currentPage === 'profile' && <Profile user={user} onUpdate={(u) => setUser(u)} />}
-              {currentPage === 'admin' && <AdminPortal users={users} setUsers={setUsers} notices={notices} setNotices={setNotices} allFiles={allFiles} setAllFiles={setAllFiles} messages={messages} onSendMessage={(msg) => setMessages(prev => [...prev, msg])} onImportFullDatabase={handleImportDatabase} onResetDatabase={handleResetDatabase} isLocalDataPinned={isLocalDataPinned} />}
+              {activePage === 'dashboard' && <Dashboard onSelectFile={setSelectedFile} files={user.role === 'ADMIN' ? allFiles : userFiles} userName={user.name} />}
+              {activePage === 'property' && <PropertyPortal allFiles={allFiles} setAllFiles={setAllFiles} onPreviewStatement={setSelectedFile} isLocalDataPinned={isLocalDataPinned} />}
+              {activePage === 'notices' && <PublicNotices notices={notices} />}
+              {activePage === 'inbox' && <Inbox messages={messages} setMessages={setMessages} currentUser={user} onSendMessage={(msg) => setMessages(prev => [...prev, msg])} users={users} />}
+              {activePage === 'profile' && <Profile user={user} onUpdate={(u) => setUser(u)} />}
+              {activePage === 'admin' && <AdminPortal users={users} setUsers={setUsers} notices={notices} setNotices={setNotices} allFiles={allFiles} setAllFiles={setAllFiles} messages={messages} onSendMessage={(msg) => setMessages(prev => [...prev, msg])} onImportFullDatabase={handleImportDatabase} onResetDatabase={handleResetDatabase} isLocalDataPinned={isLocalDataPinned} />}
             </>
           )}
         </div>

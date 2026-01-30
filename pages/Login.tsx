@@ -1,6 +1,5 @@
 
 import React, { useState, useRef } from 'react';
-import { User } from '../types';
 import { authProvider, normalizeCNIC } from '../supabase';
 import { 
   Lock, 
@@ -25,12 +24,6 @@ import {
   EyeOff
 } from 'lucide-react';
 
-interface LoginProps {
-  onLogin: (user: User) => void;
-  users: User[];
-  onRegister: (user: User) => void;
-}
-
 const Logo = () => (
   <svg viewBox="0 0 300 120" className="w-full h-auto max-w-[160px]" xmlns="http://www.w3.org/2000/svg">
     <path fill="#6e6f72" d="M3.81,83.07c.44-1.57.68-3.15,1.25-4.69,5.64-15.3,24.1-15.79,36.44-22.4l5.16-3.01-.6,3.09c-1.54.92-3.04,1.93-4.61,2.78-12.11,6.59-31.14,7.31-36.2,22.64-.36,1.08-.92,2.75-.57,3.82-.12.57-.3,1.14-.34,1.72-.33-.12-.1-1.42-.52-1.72v-2.24Z"/>
@@ -52,41 +45,30 @@ const Logo = () => (
   </svg>
 );
 
-const Login: React.FC<LoginProps> = ({ onLogin }) => {
+const Login = ({ onLogin, users, onRegister }) => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  
-  // Auth Modes: LOGIN, REGISTER, RECOVER
-  const [mode, setMode] = useState<'LOGIN' | 'REGISTER' | 'RECOVER'>('LOGIN');
-  
-  // Internal Steps
-  const [loginStep, setLoginStep] = useState<'CREDENTIALS' | 'CHALLENGE'>('CREDENTIALS');
-  const [regStep, setRegStep] = useState<'FORM' | 'VERIFY'>('FORM');
-  const [recoverStep, setRecoverStep] = useState<'EMAIL' | 'RESET'>('EMAIL');
-
+  const [mode, setMode] = useState('LOGIN');
+  const [loginStep, setLoginStep] = useState('CREDENTIALS');
+  const [regStep, setRegStep] = useState('FORM');
+  const [recoverStep, setRecoverStep] = useState('EMAIL');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [targetEmail, setTargetEmail] = useState('');
-  const otpInputs = useRef<(HTMLInputElement | null)[]>([]);
-
-  // Password Visibility States
-  const [showLoginPass, setShowLoginPass] = useState(false);
-  const [showRegPass, setShowRegPass] = useState(false);
-  const [showResetPass, setShowResetPass] = useState(false);
-
-  // Form states
-  const [loginIdentity, setLoginIdentity] = useState(''); // Hybrid field: Email or CNIC
+  
+  // State for missing identity fields
+  const [loginIdentity, setLoginIdentity] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-
   const [regName, setRegName] = useState('');
-  const [regCnic, setRegCnic] = useState('');
   const [regEmail, setRegEmail] = useState('');
+  const [regCnic, setRegCnic] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('');
-
   const [newPassword, setNewPassword] = useState('');
 
-  const handleOtpChange = (value: string, index: number) => {
+  const otpInputs = useRef([]);
+
+  const handleOtpChange = (value, index) => {
     if (!/^\d*$/.test(value)) return;
     const newOtp = [...otp];
     newOtp[index] = value.slice(-1);
@@ -94,7 +76,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     if (value && index < 5) otpInputs.current[index + 1]?.focus();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, index: number) => {
+  const handleKeyDown = (e, index) => {
     if (e.key === 'Backspace' && !otp[index] && index > 0) otpInputs.current[index - 1]?.focus();
   };
 
@@ -106,143 +88,84 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setLoginStep('CREDENTIALS');
     setRegStep('FORM');
     setRecoverStep('EMAIL');
-    setShowLoginPass(false);
-    setShowRegPass(false);
-    setShowResetPass(false);
+    setLoginIdentity('');
+    setLoginPassword('');
+    setRegName('');
+    setRegEmail('');
+    setRegCnic('');
+    setRegPhone('');
+    setRegPassword('');
+    setNewPassword('');
   };
 
-  /**
-   * VERIFICATION HANDLERS (OTP)
-   */
-  const handleVerify = async (e: React.FormEvent) => {
+  const handleVerify = async (e) => {
     e.preventDefault();
     const token = otp.join('');
     if (token.length < 6) return;
-
     setIsLoading(true);
     setError('');
 
     try {
       if (mode === 'RECOVER') {
-        const { error: verifyError } = await authProvider.verifyResetOTP(targetEmail, token);
-        if (verifyError) throw verifyError;
-
-        const { error: updateError } = await authProvider.updatePassword(newPassword);
-        if (updateError) throw updateError;
-
-        setSuccess('Security clearance granted. Your password has been successfully updated.');
-        setTimeout(() => {
-          setMode('LOGIN');
-          resetAllStates();
-        }, 2000);
+        await authProvider.verifyResetOTP(targetEmail, token);
+        await authProvider.updatePassword(newPassword);
+        setSuccess('Security clearance granted. Updated.');
+        setTimeout(() => setMode('LOGIN'), 2000);
       } else {
         const { data, error: authError } = await authProvider.verifyOTP(
           targetEmail, 
           token, 
           mode === 'REGISTER' ? 'signup' : 'email'
         );
-        
         if (authError) throw authError;
-
         if (data.user) {
-          if (mode === 'REGISTER') {
-            await authProvider.upsertProfile({
-              id: data.user.id,
-              name: regName,
-              cnic: regCnic,
-              phone: regPhone,
-              email: regEmail,
-              role: 'CLIENT'
-            });
-          }
-
-          const profile = data.user.user_metadata;
-          const finalUser: User = {
+          onLogin({
             id: data.user.id,
-            name: profile?.name || regName || data.user.email?.split('@')[0] || 'Member',
+            name: data.user.user_metadata?.name || 'Member',
             email: data.user.email || targetEmail,
-            cnic: profile?.cnic || regCnic || 'VERIFIED',
-            phone: profile?.phone || regPhone || '',
-            role: (profile?.role as any) || 'CLIENT',
+            role: data.user.user_metadata?.role || 'CLIENT',
             status: 'Active'
-          };
-          onLogin(finalUser);
+          });
         }
       }
-    } catch (err: any) {
-      setError(err.message || 'Identity verification failed. Invalid code.');
+    } catch (err) {
+      setError(err.message || 'Verification failed.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  /**
-   * PHASE 1: Submission
-   */
-  const handleAuthSubmit = async (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e) => {
     e.preventDefault();
-    setError('');
-    setSuccess('');
     setIsLoading(true);
-
+    setError('');
     try {
       if (mode === 'LOGIN') {
         let finalEmail = loginIdentity.trim();
-        
-        // Hybrid Login Logic: Check if input is a CNIC instead of Email
-        const isEmail = finalEmail.includes('@');
-        if (!isEmail) {
-          const { data: profile, error: cnicError } = await authProvider.checkCnicExists(finalEmail);
-          if (cnicError || !profile?.email) {
-            throw new Error('Identity not found. Please verify your CNIC number or use your Email.');
-          }
+        if (!finalEmail.includes('@')) {
+          const { data: profile } = await authProvider.checkCnicExists(finalEmail);
+          if (!profile?.email) throw new Error('Identity not found.');
           finalEmail = profile.email;
         }
-
-        const { data: signInData, error: loginError } = await authProvider.signIn(finalEmail, loginPassword);
-        if (loginError) throw loginError;
-
-        // Trigger OTP Challenge after password verification
-        const { error: otpError } = await authProvider.sendLoginChallenge(finalEmail);
-        if (otpError) throw otpError;
-
+        await authProvider.signIn(finalEmail, loginPassword);
+        await authProvider.sendLoginChallenge(finalEmail);
         setTargetEmail(finalEmail);
         setLoginStep('CHALLENGE');
-        setSuccess('Credentials verified. A 6-digit challenge has been dispatched to your email.');
-      } 
-      else if (mode === 'RECOVER') {
-        const { error: resetError } = await authProvider.resetPasswordForEmail(targetEmail);
-        if (resetError) throw resetError;
+      } else if (mode === 'RECOVER') {
+        await authProvider.resetPasswordForEmail(targetEmail);
         setRecoverStep('RESET');
-        setSuccess('Recovery link and OTP challenge dispatched to your email.');
-      }
-      else {
-        // REGISTER
-        const { data: existing, error: checkError } = await authProvider.checkIdentityExists(regCnic, regEmail);
-        if (existing) {
-          if (existing.cnic_normalized === normalizeCNIC(regCnic)) {
-            throw new Error(`The CNIC ${regCnic} is already registered.`);
-          }
-          if (existing.email.toLowerCase() === regEmail.toLowerCase()) {
-            throw new Error(`The email address ${regEmail} is already in use.`);
-          }
-        }
-
-        const { error: signUpError } = await authProvider.signUp(regEmail, regPassword, {
+      } else {
+        await authProvider.signUp(regEmail, regPassword, {
           name: regName,
           cnic: regCnic,
           phone: regPhone,
           role: 'CLIENT'
         });
-
-        if (signUpError) throw signUpError;
-
         setTargetEmail(regEmail);
         setRegStep('VERIFY');
-        setSuccess(`Registration initiated. Verification code sent to ${regEmail}.`);
       }
-    } catch (err: any) {
-      setError(err.message || 'Authentication sequence failed.');
+    } catch (err) {
+      setError(err.message || 'Auth failed.');
     } finally {
       setIsLoading(false);
     }
@@ -251,306 +174,62 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const isOTPPhase = (mode === 'LOGIN' && loginStep === 'CHALLENGE') || (mode === 'REGISTER' && regStep === 'VERIFY') || (mode === 'RECOVER' && recoverStep === 'RESET');
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-900 p-4 relative overflow-hidden font-sans text-slate-900">
-      <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
-        <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-emerald-500 blur-[150px] rounded-full"></div>
-        <div className="absolute bottom-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-500 blur-[150px] rounded-full"></div>
-      </div>
-
-      <div className={`w-full ${mode === 'REGISTER' && !isOTPPhase ? 'max-w-2xl' : 'max-w-md'} z-10 space-y-4 transition-all duration-500`}>
+    <div className="min-h-screen flex items-center justify-center bg-slate-900 p-4 relative overflow-hidden text-slate-900">
+      <div className="w-full max-md z-10 space-y-4">
         <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200">
           <div className="p-8 bg-white border-b border-slate-100 flex flex-col items-center text-center">
              <div className="mb-6"><Logo /></div>
-             <h1 className="text-2xl font-black tracking-tighter text-slate-900 uppercase">
-                {isOTPPhase ? 'SECURITY CHALLENGE' : 
-                 mode === 'LOGIN' ? 'CUSTOMER PORTAL' : 
-                 mode === 'RECOVER' ? 'PASSWORD RECOVERY' : 'IDENTITY REGISTRATION'}
-             </h1>
-             <p className="text-slate-500 mt-1 text-[10px] font-black uppercase tracking-[0.2em]">
-               {isOTPPhase ? `AUTHENTICATION CODE SENT TO EMAIL` : 'DIN Properties Secure Asset Terminal'}
-             </p>
+             <h1 className="text-2xl font-black uppercase tracking-tighter">{isOTPPhase ? 'CHALLENGE' : 'PORTAL'}</h1>
           </div>
-
           <div className="p-8">
-            {error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-700 text-xs font-bold animate-in fade-in zoom-in">
-                <ShieldAlert size={18} className="shrink-0" />
-                <span className="leading-tight">{error}</span>
-              </div>
-            )}
-
-            {success && (
-              <div className="mb-6 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 text-emerald-700 text-[9px] font-black uppercase tracking-wider animate-in fade-in zoom-in leading-relaxed">
-                <CheckCircle size={18} className="shrink-0 text-emerald-500" />
-                {success}
-              </div>
-            )}
-
+            {error && <div className="mb-6 p-4 bg-red-50 text-red-700 text-xs font-bold rounded-2xl">{error}</div>}
+            {success && <div className="mb-6 p-4 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-2xl">{success}</div>}
             {!isOTPPhase ? (
               <form onSubmit={handleAuthSubmit} className="space-y-6">
-                {mode === 'LOGIN' && (
+                {mode === 'LOGIN' ? (
                   <>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-1">Identity Access (Email or CNIC)</label>
-                      <div className="relative">
-                        <Contact2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                          type="text"
-                          required
-                          placeholder="your@email.com or 33100-XXXXXXX-X"
-                          className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-sm font-medium transition-all focus:ring-4 focus:ring-slate-900/5"
-                          value={loginIdentity}
-                          onChange={(e) => setLoginIdentity(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between items-center px-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Security Key</label>
-                        <button 
-                          type="button" 
-                          onClick={() => { setMode('RECOVER'); resetAllStates(); }} 
-                          className="text-[9px] font-black text-emerald-600 hover:underline uppercase tracking-widest"
-                        >
-                          Forgot Key?
-                        </button>
-                      </div>
-                      <div className="relative">
-                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                          type={showLoginPass ? "text" : "password"}
-                          required
-                          placeholder="••••••••"
-                          className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-sm font-medium transition-all focus:ring-4 focus:ring-slate-900/5"
-                          value={loginPassword}
-                          onChange={(e) => setLoginPassword(e.target.value)}
-                        />
-                        <button 
-                          type="button"
-                          onClick={() => setShowLoginPass(!showLoginPass)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-                        >
-                          {showLoginPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                        </button>
-                      </div>
-                    </div>
+                    <input type="text" required placeholder="Email or CNIC" className="w-full p-4 bg-slate-50 rounded-2xl" value={loginIdentity} onChange={e => setLoginIdentity(e.target.value)} />
+                    <input type="password" required placeholder="Password" className="w-full p-4 bg-slate-50 rounded-2xl" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
                   </>
+                ) : mode === 'REGISTER' ? (
+                  <>
+                    <input type="text" required placeholder="Full Name" className="w-full p-4 bg-slate-50 rounded-2xl" value={regName} onChange={e => setRegName(e.target.value)} />
+                    <input type="email" required placeholder="Email" className="w-full p-4 bg-slate-50 rounded-2xl" value={regEmail} onChange={e => setRegEmail(e.target.value)} />
+                    <input type="text" required placeholder="CNIC (xxxxx-xxxxxxx-x)" className="w-full p-4 bg-slate-50 rounded-2xl" value={regCnic} onChange={e => setRegCnic(e.target.value)} />
+                    <input type="text" required placeholder="Phone Number" className="w-full p-4 bg-slate-50 rounded-2xl" value={regPhone} onChange={e => setRegPhone(e.target.value)} />
+                    <input type="password" required placeholder="Password" className="w-full p-4 bg-slate-50 rounded-2xl" value={regPassword} onChange={e => setRegPassword(e.target.value)} />
+                  </>
+                ) : (
+                  <input type="email" required placeholder="Email for Recovery" className="w-full p-4 bg-slate-50 rounded-2xl" value={targetEmail} onChange={e => setTargetEmail(e.target.value)} />
                 )}
-
-                {mode === 'RECOVER' && (
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-1">Registered Email</label>
-                    <div className="relative">
-                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                      <input
-                        type="email"
-                        required
-                        placeholder="your@email.com"
-                        className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-sm font-medium transition-all focus:ring-4 focus:ring-slate-900/5"
-                        value={targetEmail}
-                        onChange={(e) => setTargetEmail(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {mode === 'REGISTER' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-1.5 md:col-span-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-1">Full Name</label>
-                      <div className="relative">
-                        <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                          type="text"
-                          required
-                          placeholder="AS PER CNIC"
-                          className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-sm font-black uppercase"
-                          value={regName}
-                          onChange={(e) => setRegName(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-1"> CNIC</label>
-                      <div className="relative">
-                        <Fingerprint className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                          type="text"
-                          required
-                          placeholder="33102-XXXXXXX-X"
-                          className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-sm font-black tracking-widest"
-                          value={regCnic}
-                          onChange={(e) => setRegCnic(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-1">Phone Number</label>
-                      <div className="relative">
-                        <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                          type="tel"
-                          required
-                          placeholder="03XX-XXXXXXX"
-                          className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-sm font-bold"
-                          value={regPhone}
-                          onChange={(e) => setRegPhone(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-1">Email Address</label>
-                      <div className="relative">
-                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                          type="email"
-                          required
-                          placeholder="verification@host.com"
-                          className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-sm font-medium"
-                          value={regEmail}
-                          onChange={(e) => setRegEmail(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5 md:col-span-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-1">Set Password</label>
-                      <div className="relative">
-                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                          type={showRegPass ? "text" : "password"}
-                          required
-                          placeholder="••••••••"
-                          className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-sm"
-                          value={regPassword}
-                          onChange={(e) => setRegPassword(e.target.value)}
-                        />
-                        <button 
-                          type="button"
-                          onClick={() => setShowRegPass(!showRegPass)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-                        >
-                          {showRegPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full bg-slate-900 hover:bg-black text-white font-black py-4 rounded-3xl flex items-center justify-center gap-3 transition-all shadow-xl active:scale-[0.98] disabled:opacity-70 uppercase tracking-widest text-xs"
-                >
-                  {isLoading ? (
-                    <Loader2 className="animate-spin" size={18} />
-                  ) : (
-                    <>
-                      {mode === 'LOGIN' ? 'Verify Credentials' : mode === 'RECOVER' ? 'Send OTP Recovery' : 'Initialize Identity'}
-                      <ArrowRight size={18} />
-                    </>
-                  )}
+                <button type="submit" disabled={isLoading} className="w-full bg-slate-900 text-white p-4 rounded-3xl font-black uppercase">
+                  {isLoading ? '...' : 'Continue'}
                 </button>
-
-                <div className="pt-6 border-t border-slate-100 text-center space-y-4">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                    {mode === 'LOGIN' ? 'New Member?' : 'Already Synchronized?'} 
-                    <button 
-                      type="button" 
-                      onClick={() => { setMode(mode === 'LOGIN' ? 'REGISTER' : 'LOGIN'); resetAllStates(); }} 
-                      className="ml-2 text-emerald-600 font-black hover:underline"
-                    >
-                      {mode === 'LOGIN' ? 'SIGN UP' : 'LOGIN'}
-                    </button>
-                  </p>
-                  {mode === 'RECOVER' && (
-                    <button 
-                      type="button" 
-                      onClick={() => { setMode('LOGIN'); resetAllStates(); }} 
-                      className="text-[10px] font-black text-slate-400 hover:text-slate-900 uppercase tracking-widest flex items-center justify-center gap-2 mx-auto"
-                    >
-                      <ArrowLeft size={14} /> Back to Entry
+                <div className="flex flex-col gap-2 mt-4">
+                  <button type="button" onClick={() => { resetAllStates(); setMode(mode === 'LOGIN' ? 'REGISTER' : 'LOGIN'); }} className="w-full text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors">
+                    {mode === 'LOGIN' ? 'Create Account' : 'Back to Login'}
+                  </button>
+                  {mode === 'LOGIN' && (
+                    <button type="button" onClick={() => { resetAllStates(); setMode('RECOVER'); }} className="w-full text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors">
+                      Forgot Password?
                     </button>
                   )}
                 </div>
               </form>
             ) : (
               <form onSubmit={handleVerify} className="space-y-8">
+                {mode === 'RECOVER' && (
+                  <input type="password" required placeholder="New Password" className="w-full p-4 bg-slate-50 rounded-2xl mb-4" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+                )}
                 <div className="flex justify-center gap-2">
                   {otp.map((digit, i) => (
-                    <input
-                      key={i}
-                      ref={(el) => { otpInputs.current[i] = el; }}
-                      type="text"
-                      maxLength={1}
-                      className="w-10 h-14 sm:w-12 sm:h-16 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xl font-black focus:ring-8 focus:ring-emerald-500/10 outline-none transition-all"
-                      value={digit}
-                      onChange={(e) => handleOtpChange(e.target.value, i)}
-                      onKeyDown={(e) => handleKeyDown(e, i)}
-                      autoFocus={i === 0}
-                    />
+                    <input key={i} ref={el => otpInputs.current[i] = el} type="text" maxLength={1} className="w-10 h-14 bg-slate-50 rounded-2xl text-center text-xl font-black" value={digit} onChange={e => handleOtpChange(e.target.value, i)} onKeyDown={e => handleKeyDown(e, i)} />
                   ))}
                 </div>
-
-                {mode === 'RECOVER' && (
-                  <div className="space-y-1.5 px-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">New Password</label>
-                    <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                      <input
-                        type={showResetPass ? "text" : "password"}
-                        required
-                        placeholder="••••••••"
-                        className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-sm font-medium"
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                      />
-                      <button 
-                        type="button"
-                        onClick={() => setShowResetPass(!showResetPass)}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-                      >
-                        {showResetPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
-                    </div>
-                  </div>
-                )}
-                
-                <div className="space-y-4">
-                  <button
-                    type="submit"
-                    disabled={isLoading || otp.some(d => !d) || (mode === 'RECOVER' && !newPassword)}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-4 rounded-3xl transition-all shadow-2xl uppercase tracking-[0.2em] text-xs flex items-center justify-center gap-3"
-                  >
-                    {isLoading ? <Loader2 className="animate-spin" size={18} /> : mode === 'RECOVER' ? <RefreshCw size={18} /> : <ShieldCheck size={18} />}
-                    {mode === 'RECOVER' ? 'Reset Security Key' : 'Complete Verification'}
-                  </button>
-                  <div className="text-center pt-2">
-                     <button
-                        type="button"
-                        onClick={() => { resetAllStates(); }}
-                        className="text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-slate-600 transition-all flex items-center justify-center gap-2 mx-auto"
-                      >
-                        <ShieldEllipsis size={14} /> Abort Sequence
-                      </button>
-                  </div>
-                </div>
-
-                <div className="p-6 bg-slate-50 border border-slate-100 rounded-[2rem] flex items-start gap-3">
-                  <KeyRound size={18} className="text-slate-400 shrink-0 mt-0.5" />
-                  <p className="text-[9px] text-slate-500 font-bold leading-relaxed uppercase">
-                    Security Policy: Reset code expires in 10 minutes. Ensure the new key follows local complexity requirements.
-                  </p>
-                </div>
+                <button type="submit" className="w-full bg-emerald-600 text-white p-4 rounded-3xl font-black uppercase">Verify</button>
+                <button type="button" onClick={() => resetAllStates()} className="w-full text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors">Cancel</button>
               </form>
             )}
-          </div>
-        </div>
-
-        <div className="text-center text-slate-500 text-[10px] font-black uppercase tracking-widest opacity-40 py-4">
-          <p>&copy; 2024 DIN Properties (Pvt) Ltd</p>
-          <div className="mt-2 flex items-center justify-center gap-4">
-            <span className="flex items-center gap-1"><Database size={12} /> Secure Ledger Node</span>
-            <span className="flex items-center gap-1"><ShieldCheck size={12} /> SSL Encrypted</span>
           </div>
         </div>
       </div>

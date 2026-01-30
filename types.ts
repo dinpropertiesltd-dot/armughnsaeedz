@@ -1,5 +1,7 @@
 
-export type UserRole = 'CLIENT' | 'ADMIN';
+/**
+ * Types for the application domain model.
+ */
 
 export interface User {
   id: string;
@@ -7,41 +9,39 @@ export interface User {
   name: string;
   email: string;
   phone: string;
-  role: UserRole;
-  status: 'Active' | 'Inactive';
-  lastLogin?: string;
+  role: string;
+  status: string;
   password?: string;
-  isOnline?: boolean;
 }
 
 export interface Transaction {
   seq: number;
   transid: number;
   line_id: number;
-  shortname: string; // Metadata from SAP
+  shortname: string;
   duedate: string;
-  receivable: number | null;
+  receivable: number;
   u_intno: number;
   u_intname: string;
   transtype: string;
-  itemcode: string; // The True Primary Identifier
+  itemcode: string;
   plottype: string;
   currency: string;
   description: string;
   doctotal: number;
   status: string;
   balance: number;
-  balduedeb?: number; // Map to "OS Balance" in UI
-  paysrc: number | null;
-  amount_paid?: number;
-  receipt_date?: string;
-  mode?: string;
-  surcharge?: number;
+  amount_paid: number;
+  receipt_date: string;
+  mode: string;
+  surcharge: number;
+  balduedeb: number;
+  paysrc: any;
   instrument_no?: string;
 }
 
 export interface PropertyFile {
-  fileNo: string; // Strictly stores the 'itemcode'
+  fileNo: string;
   currencyNo: string;
   plotSize: string;
   plotValue: number;
@@ -53,20 +53,17 @@ export interface PropertyFile {
   overdue: number;
   ownerName: string;
   ownerCNIC: string;
-  fatherName: string; // S/O, D/O, W/O
+  fatherName: string;
   cellNo: string;
   regDate: string;
   address: string;
-  // Location specific fields
   plotNo: string;
   block: string;
   park: string;
   corner: string;
   mainBoulevard: string;
   transactions: Transaction[];
-  uploadedStatementUrl?: string;
-  uploadedStatementName?: string;
-  lastNotified?: string; // Track when the user was last contacted
+  lastNotified?: string;
 }
 
 export interface Notice {
@@ -74,7 +71,7 @@ export interface Notice {
   title: string;
   content: string;
   date: string;
-  type: 'Public' | 'Policy' | 'Alert';
+  type: string;
 }
 
 export interface Message {
@@ -86,6 +83,10 @@ export interface Message {
   body: string;
   date: string;
   isRead: boolean;
-  fileId?: string;
-  type?: 'Direct' | 'Broadcast';
+  type: string;
 }
+
+export const Roles = {
+  CLIENT: 'CLIENT',
+  ADMIN: 'ADMIN'
+};
